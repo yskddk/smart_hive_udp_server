@@ -1,3 +1,6 @@
+# for smart_hive_udp_server executable
+smart_hive_udp_server
+
 # Prerequisites
 *.d
 
