@@ -201,17 +201,17 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
     /*
      * UDP packet format:
      *
-     *  |<----------- A bytes ----------->|
-     *  |               |<-- A-4 bytes -->|
+     *  |<----------- B bytes ----------->|
+     *  |               |<-- B-4 bytes -->|
      *  +---+---+---+---+-----.......-----+
      *  | A | B | C | D |        E        |
      *  +---+---+---+---+-----.......-----+
      *
-     *      * A: Protocol version, 1byte
-     *      * B: Length (from A to D), 1byte
-     *      * C: UDP client ID, 1byte
-     *      * D: Packet type, 1byte
-     *      * E: LoRa data, A-4bytes (max 127 bytes)
+     *      * A (1 byte) : Protocol version
+     *      * B (1 byte) : Length (from A to E)
+     *      * C (1 byte) : UDP client ID
+     *      * D (1 byte) : Packet type
+     *      * E (B-4 bytes) : LoRa data (max 127 bytes)
      */
     if (len_ != UDP_PACKET_SIZE) {
         fprintf(stderr, "Invalid UDP packet size: %lu\n", len_);
