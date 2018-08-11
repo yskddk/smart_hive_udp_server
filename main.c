@@ -322,7 +322,8 @@ int main(void)
     {   /* POSIX style */
         int flags = fcntl(socket_fd, F_GETFL, 0);
 
-        ret = fcntl(socket_fd, F_SETFL, flags + O_NONBLOCK);
+        flags |= O_NONBLOCK;
+        ret = fcntl(socket_fd, F_SETFL, flags);
         if (ret) {
             perror("fcntl(O_NONBLOCK)");
             close(socket_fd), socket_fd = -1;
