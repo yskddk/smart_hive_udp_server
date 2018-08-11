@@ -8,6 +8,8 @@
 /** If you use POSIX style non-block socket, enable this */
 #define ENABLE_POSIX_NONBLOCK
 
+/** Using Mike's server, enable this */
+#define ENABLE_DELEGATE_MIKE
 
 
 #include <stdio.h>
@@ -43,9 +45,9 @@
 #define UDP_PACKET_SIZE       (UDP_HEADER_SIZE + LORA_PACKET_SIZE)
 #define MAX_UDP_CLIENTS       (2)
 
-#define UDP_SERVER_PORT (51234)
+#define UDP_SERVER_PORT (50812)
 #define UDP_SERVER_ADDR ("127.0.0.1")
-#define UDP_SERVER_TIMEOUT_SEC  (1)
+#define UDP_SERVER_TIMEOUT_SEC  (3)
 #define UDP_SERVER_TIMEOUT_USEC (0)
 
 #define UDP_BUFSIZE (256)
@@ -59,11 +61,21 @@
 
 
 
+struct delegate_plugin {
+    bool (*p_init_fn)(struct delegate_plugin *p_, unsigned udp_id_);    /* opt */
+    void (*p_deinit_fn)(struct delegate_plugin *p_, unsigned udp_id_);  /* opt */
+    bool (*p_generate_csv_fn)(struct delegate_plugin *p_,
+            const uint8_t *p_lora_, size_t bufsize_, char *p_buf_);     /* must */
+    bool (*p_send_to_server_fn)(struct delegate_plugin *p_,
+            const char *p_csv_);                                        /* must */
+    void *p_user;                                                       /* opt */
+};
+
+
+
 static volatile sig_atomic_t g_do_term_ = 0;
-
-
-
 static uint8_t g_lora_histories_[MAX_UDP_CLIENTS][MAX_LORA_CLIENTS][LORA_PACKET_SIZE];
+static struct delegate_plugin g_delegate_[MAX_UDP_CLIENTS];
 
 
 
@@ -108,7 +120,197 @@ static uint32_t be32_to_uint32_(const uint8_t *p_)
 }
 
 
-static void generate_csv_(const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
+
+#if defined(ENABLE_DELEGATE_MIKE)
+
+#define UDP_MIKE_SERVER_PORT (50910)
+#define UDP_MIKE_SERVER_ADDR ("127.0.0.1")
+#define MAX_SHEET_NAME (32)
+
+struct mike_info {
+    int socket_fd;
+    struct sockaddr_in *p_sa;
+    char name[MAX_SHEET_NAME];
+};
+
+static int g_mike_socket_fd_ = -1;
+static struct sockaddr_in g_mike_sa_;
+static struct mike_info g_mike_info[MAX_UDP_CLIENTS];
+
+
+
+static bool init_mike_(struct delegate_plugin *p_, unsigned udp_id_)
+{
+    struct mike_info *p_info = &g_mike_info[udp_id_];
+
+    assert(p_);
+    assert(udp_id_ < MAX_UDP_CLIENTS);
+
+    if (g_mike_socket_fd_ < 0) {
+        if (1 != inet_pton(AF_INET,
+                    UDP_MIKE_SERVER_ADDR, &g_mike_sa_.sin_addr.s_addr)) {
+            perror("inet_pton() for Mike");
+            return false;
+
+        }
+        g_mike_sa_.sin_family = AF_INET;
+        g_mike_sa_.sin_port = htons(UDP_MIKE_SERVER_PORT);
+
+        g_mike_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_mike_socket_fd_ < 0) {
+            perror("client socket for Mike");
+            return false;
+        }
+    }
+
+    p_info->socket_fd = g_mike_socket_fd_;
+    p_info->p_sa      = &g_mike_sa_;
+    snprintf(p_info->name, sizeof(p_info->name), "%u", udp_id_);
+    p_info->name[sizeof(p_info->name) - 1] = '\0';
+
+    p_->p_user = p_info;
+
+    return true;
+}
+
+
+
+static void deinit_mike_(struct delegate_plugin *p_, unsigned udp_id_)
+{
+    assert(p_);
+    assert(udp_id_ < MAX_UDP_CLIENTS);
+
+    if (0 <= g_mike_socket_fd_) {
+        close(g_mike_socket_fd_);
+        g_mike_socket_fd_ = -1;
+    }
+    p_->p_user = NULL;
+
+    return;
+}
+
+
+
+static bool generate_csv_mike_(struct delegate_plugin *p_,
+        const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
+{
+    struct mike_info *p_info = (struct mike_info *)p_->p_user;
+    uint32_t lat_n = 0;
+    uint32_t lon_e = 0;
+    uint16_t temp[4] = { 0 };
+    uint16_t rh[4] = { 0 };
+    uint16_t vol[4] = { 0 };
+    uint16_t weight = 0;
+    int ret = 0;
+
+    assert(p_);
+    assert(p_lora_);
+    assert(bufsize_);
+    assert(p_buf_);
+    assert(p_info);
+
+    /*
+     * Mike's server format CSV
+     *
+     *  CSV:
+     *      "Method,WorkSheetName,(...Lora CSV string)"
+     *
+     *      * Method
+     *          * "write" : write Lora CSV data to WorkSheetName
+     *          * "close" : close Mike's server socket
+     *      * WorkSheetName
+     *          Worksheet name in the Google Spreadsheet.
+     *          If you specify a name that does not exist in the
+     *          spreadsheet, Google Spreadsheet will automatically
+     *          generate it.
+     */
+
+    lat_n   = be32_to_uint32_(&p_lora_[9]);
+    lon_e   = be32_to_uint32_(&p_lora_[13]);
+    temp[0] = be16_to_uint16_(&p_lora_[17]);
+    temp[1] = be16_to_uint16_(&p_lora_[19]);
+    temp[2] = be16_to_uint16_(&p_lora_[21]);
+    temp[3] = be16_to_uint16_(&p_lora_[23]);
+    rh[0]   = be16_to_uint16_(&p_lora_[25]);
+    rh[1]   = be16_to_uint16_(&p_lora_[27]);
+    rh[2]   = be16_to_uint16_(&p_lora_[29]);
+    rh[3]   = be16_to_uint16_(&p_lora_[31]);
+    vol[0]  = be16_to_uint16_(&p_lora_[33]);
+    vol[1]  = be16_to_uint16_(&p_lora_[35]);
+    vol[2]  = be16_to_uint16_(&p_lora_[37]);
+    vol[3]  = be16_to_uint16_(&p_lora_[39]);
+    weight  = be16_to_uint16_(&p_lora_[41]);
+
+    ret = snprintf(p_buf_, bufsize_,
+            "write"                         /* Method */
+            ",%s"                           /* WorkSheetName */
+            ",%02u%02u%02u%02u%02u%02u"     /* yymmddHHMMSS */
+            ",%u.%u"                        /* Lon */
+            ",%u.%u"                        /* Lat */
+            ",%u.%u,%u.%u,%u.%u"            /* Tem1,Hum1,Vol1 */
+            ",%u.%u,%u.%u,%u.%u"            /* Tem2,Hum2,Vol2 */
+            ",%u.%u,%u.%u,%u.%u"            /* Tem3,Hum3,Vol3 */
+            ",%u.%u,%u.%u,%u.%u"            /* Tem4,Hum4,Vol4 */
+            ",%u.%u"                        /* Weight */
+            , p_info->name
+            , p_lora_[3], p_lora_[4], p_lora_[5]
+            , p_lora_[6], p_lora_[7], p_lora_[8]
+            , lon_e / 1000000, lon_e % 1000000
+            , lat_n / 1000000, lat_n % 1000000
+            , temp[0] / 10, temp[0] % 10
+            , rh[0] / 10, rh[0] % 10
+            , vol[0] / 10, vol[0] % 10
+            , temp[1] / 10, temp[1] % 10
+            , rh[1] / 10, rh[1] % 10
+            , vol[1] / 10, vol[1] % 10
+            , temp[2] / 10, temp[2] % 10
+            , rh[2] / 10, rh[2] % 10
+            , vol[2] / 10, vol[2] % 10
+            , temp[3] / 10, temp[3] % 10
+            , rh[3] / 10, rh[3] % 10
+            , vol[3] / 10, vol[3] % 10
+            , weight / 100, weight % 100
+            );
+    if (ret < 0 || bufsize_ <= ret) {
+        fprintf(stderr, "snprintf() [%d]: truncated\n", __LINE__);
+        return false;
+    }
+    p_buf_[bufsize_ - 1] = '\0';
+
+    return true;
+}
+
+
+
+static bool send_to_server_mike_(struct delegate_plugin *p_, const char *p_csv_)
+{
+    struct mike_info *p_info = (struct mike_info *)p_->p_user;
+    size_t len = 0;
+    ssize_t nr = -1;
+
+    assert(p_);
+    assert(p_csv_);
+    assert(p_info);
+
+    len = 1 + strlen(p_csv_);
+    nr = sendto(p_info->socket_fd, p_csv_, len, 0 ,
+            (struct sockaddr *)p_info->p_sa, sizeof(*(p_info->p_sa)));
+    if (nr != len) {
+        perror("sendto() for Mike");
+        return false;
+    }
+
+    return true;
+}
+
+
+
+#else /* defined(ENABLE_DELEGATE_MIKE) */
+
+
+
+static bool generate_csv_default_(struct delegate_plugin *p_,
+        const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
 {
     uint32_t lat_n = 0;
     uint32_t lon_e = 0;
@@ -116,8 +318,10 @@ static void generate_csv_(const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
     uint16_t rh[4] = { 0 };
     uint16_t vol[4] = { 0 };
     uint16_t weight = 0;
+    int ret = 0;
 
     assert(p_);
+    assert(p_lora_);
     assert(bufsize_);
     assert(p_buf_);
 
@@ -138,23 +342,10 @@ static void generate_csv_(const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
     vol[3]  = be16_to_uint16_(&p_lora_[39]);
     weight  = be16_to_uint16_(&p_lora_[41]);
 
-    snprintf(p_buf_, bufsize_,
-            "%u,"
-            "%u,"
-            "%u,"
-            "%u,%u,%u,"
-            "%u,%u,%u,"
-            , (unsigned)p_lora_[0]
-            , (unsigned)p_lora_[1]
-            , (unsigned)p_lora_[2]
-            , (unsigned)p_lora_[3], (unsigned)p_lora_[4], (unsigned)p_lora_[5]
-            , (unsigned)p_lora_[6], (unsigned)p_lora_[7], (unsigned)p_lora_[8]
-            );
-
-    snprintf(p_buf_, bufsize_,
-            "%u,%u,%u"
-            ",%u,%u,%u"
-            ",%u,%u,%u"
+    ret = snprintf(p_buf_, bufsize_,
+            "%u,%u,%u"      /* ID, N, PI */
+            ",%u,%u,%u"     /* yymmdd */
+            ",%u,%u,%u"     /* HHMMSS */
             ",%u.%u,%u.%u"
             ",%u.%u,%u.%u,%u.%u,%u.%u"
             ",%u.%u,%u.%u,%u.%u,%u.%u"
@@ -179,9 +370,30 @@ static void generate_csv_(const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
             , vol[3] / 10, vol[3] % 10
             , weight / 100, weight % 100
             );
+    if (ret < 0 || bufsize_ <= ret) {
+        fprintf(stderr, "snprintf() [%d]: truncated\n", __LINE__);
+        return false;
+    }
     p_buf_[bufsize_ - 1] = '\0';
-    return;
+
+    return true;
 }
+
+
+
+static bool send_to_server_default_(struct delegate_plugin *p_, const char *p_csv_)
+{
+    assert(p_);
+    assert(p_csv_);
+
+    puts(p_csv_);
+
+    return true;
+}
+
+
+
+#endif /* defined(ENABLE_DELEGATE_MIKE) */
 
 
 
@@ -262,12 +474,71 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
     }
 
     p_hist = g_lora_histories_[udp_id][lora_id];
-    if (memcmp(p_hist, p_lora, LORA_PACKET_SIZE)) {
-        /* save new data */
-        memcpy(p_hist, p_lora, LORA_PACKET_SIZE);
-        generate_csv_(p_lora, sizeof(csv), csv);
+    if (!memcmp(p_hist, p_lora, LORA_PACKET_SIZE)) {
+        return true;
+    }
 
-        /* TODO: send to google */
+    /* new data arrival */
+    memcpy(p_hist, p_lora, LORA_PACKET_SIZE);
+
+    assert(g_delegate_[udp_id].p_generate_csv_fn);
+    if (!g_delegate_[udp_id].p_generate_csv_fn(&g_delegate_[udp_id],
+                p_lora, sizeof(csv), csv)) {
+        fprintf(stderr, "Generate CSV failed\n");
+        return false;
+    }
+
+    assert(g_delegate_[udp_id].p_send_to_server_fn);
+    if (!g_delegate_[udp_id].p_send_to_server_fn(&g_delegate_[udp_id], csv)) {
+        fprintf(stderr, "Send CSV failed\n");
+        return false;
+    }
+
+    return true;
+}
+
+
+
+static void cleanup_delegate_(void)
+{
+    int i = 0;
+
+    for (i = 0; i < MAX_UDP_CLIENTS; ++i) {
+        if (g_delegate_[i].p_deinit_fn) {
+            g_delegate_[i].p_deinit_fn(&g_delegate_[i], i);
+        }
+    }
+
+    return;
+}
+
+
+
+static bool setup_delegate_(void)
+{
+    int i = 0;
+
+    memset(g_delegate_, 0, sizeof(g_delegate_));
+
+    for (i = 0; i < MAX_UDP_CLIENTS; ++i) {
+#if defined(ENABLE_DELEGATE_MIKE)
+        g_delegate_[i].p_init_fn           = init_mike_;
+        g_delegate_[i].p_deinit_fn         = deinit_mike_;
+        g_delegate_[i].p_generate_csv_fn   = generate_csv_mike_;
+        g_delegate_[i].p_send_to_server_fn = send_to_server_mike_;
+#else /* defined(ENABLE_DELEGATE_MIKE) */
+        g_delegate_[i].p_generate_csv_fn   = generate_csv_default_;
+        g_delegate_[i].p_send_to_server_fn = send_to_server_default_;
+#endif /* defined(ENABLE_DELEGATE_MIKE) */
+    }
+
+    for (i = 0; i < MAX_UDP_CLIENTS; ++i) {
+        if (g_delegate_[i].p_init_fn) {
+            if (!g_delegate_[i].p_init_fn(&g_delegate_[i], i)) {
+                cleanup_delegate_();
+                return false;
+            }
+        }
     }
 
     return true;
@@ -291,33 +562,36 @@ int main(void)
 
 
 
-    /* caught ^C to break main loop */
+    g_do_term_ = 0;
+    memset(g_lora_histories_, 0, sizeof(g_lora_histories_));
+    if (!setup_delegate_()) {
+        fprintf(stderr, "Fatal error: setup_delegate_()\n");
+        return EXIT_FAILURE;
+    }
+
     signal(SIGINT, sig_handler);
 
-    /* create UDP server socket */
-    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socket_fd < 0) {
         perror("server socket");
         return EXIT_FAILURE;
     }
 
-    /* bind */
+    /* we don't want to use recvfrom(), so treat bind() here */
     {
         struct sockaddr_in sa;
 
         sa.sin_family      = AF_INET;
         sa.sin_port        = htons(UDP_SERVER_PORT);
         /* sa.sin_addr.s_addr = INADDR_ANY; */
-        sa.sin_addr.s_addr = inet_addr(UDP_SERVER_ADDR);
-        ret = bind(socket_fd, (struct sockaddr *)&sa, sizeof(sa));
-        if (ret) {
+        if (1 != inet_pton(AF_INET, UDP_SERVER_ADDR, &sa.sin_addr.s_addr) ||
+                bind(socket_fd, (struct sockaddr *)&sa, sizeof(sa))) {
             perror("bind");
             close(socket_fd), socket_fd = -1;
             return EXIT_FAILURE;
         }
     }
 
-    /* set non-blocking mode */
 #if defined(ENABLE_POSIX_NONBLOCK)
     {   /* POSIX style */
         int flags = fcntl(socket_fd, F_GETFL, 0);
@@ -402,6 +676,8 @@ int main(void)
     }
 
     close(socket_fd), socket_fd = -1;
+
+    cleanup_delegate_();
 
     return EXIT_SUCCESS;
 }
