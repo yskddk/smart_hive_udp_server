@@ -11,6 +11,7 @@
 /** Using Mike's server, enable this */
 #define ENABLE_DELEGATE_MIKE
 
+#define ENABLE_DEBUG
 
 #include <stdio.h>
 #include <string.h>
@@ -475,10 +476,16 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
 
     p_hist = g_lora_histories_[udp_id][lora_id];
     if (!memcmp(p_hist, p_lora, LORA_PACKET_SIZE)) {
+#if defined(ENABLE_DEBUG)
+        fprintf(stderr, "same data exists\n");
+#endif /* defined(ENABLE_DEBUG) */
         return true;
     }
 
     /* new data arrival */
+#if defined(ENABLE_DEBUG)
+    fprintf(stderr, "new data arrival\n");
+#endif /* defined(ENABLE_DEBUG) */
     memcpy(p_hist, p_lora, LORA_PACKET_SIZE);
 
     assert(g_delegate_[udp_id].p_generate_csv_fn);
@@ -562,6 +569,10 @@ int main(void)
 
 
 
+#if defined(ENABLE_DEBUG)
+    fprintf(stderr, "BEGIN\n");
+#endif /* defined(ENABLE_DEBUG) */
+
     g_do_term_ = 0;
     memset(g_lora_histories_, 0, sizeof(g_lora_histories_));
     if (!setup_delegate_()) {
@@ -635,7 +646,9 @@ int main(void)
             perror("select");
 
         } else if (0 == ret) {
-            /* fprintf(stderr, "select() timeout\n"); */
+#if defined(ENABLE_DEBUG)
+            fprintf(stderr, "select() timeout\n");
+#endif /* defined(ENABLE_DEBUG) */
 
         } else if (FD_ISSET(socket_fd, &rfds)) {
             /*
@@ -667,6 +680,9 @@ int main(void)
                         "0 byte packet received\n");
 
             } else {
+#if defined(ENABLE_DEBUG)
+                fprintf(stderr, "call delegate_()\n");
+#endif /* defined(ENABLE_DEBUG) */
                 delegate_(nr, buf);
             }
         } else {
@@ -678,6 +694,10 @@ int main(void)
     close(socket_fd), socket_fd = -1;
 
     cleanup_delegate_();
+
+#if defined(ENABLE_DEBUG)
+    fprintf(stderr, "END\n");
+#endif /* defined(ENABLE_DEBUG) */
 
     return EXIT_SUCCESS;
 }
