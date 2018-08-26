@@ -14,9 +14,9 @@ OBJS = $(CSRCS:%.c=%.o)
 
 
 
-.PHONY: clean
+.PHONY: all clean
 
-all: test_sender
+all: test_sender uint2double
 
 %.o: %.c
 	gcc -o $@ -c $(CFLAGS) $<
@@ -24,5 +24,9 @@ all: test_sender
 test_sender: test_sender.o
 	gcc -o $@ $< $(LDFLAGS) $(LIBS)
 
+uint2double: uint2double.o
+	gcc -o $@ $< $(LDFLAGS) $(LIBS)
+
 clean:
 	$(RM) *.o test_sender
+	$(RM) *.o uint2double
