@@ -1,6 +1,6 @@
 /**
  * \file main.c
- * \brief SmartHive LoRa gateway UDP server
+ * \brief SmartHive LoRa gateway UDP server (Little Endian)
  * \author yusuke <gachapin.2nd@gmail.com>
  */
 
@@ -88,6 +88,13 @@ static void sig_handler(int sig)
 
 
 
+static uint16_t le16_to_uint16_(const uint8_t *p_)
+{
+    return *(const uint16_t *)p_;
+}
+
+
+
 static uint16_t be16_to_uint16_(const uint8_t *p_)
 {
     uint16_t ret = 0;
@@ -99,6 +106,13 @@ static uint16_t be16_to_uint16_(const uint8_t *p_)
     ret |= *p_;
 
     return ret;
+}
+
+
+
+static uint32_t le32_to_uint32_(const uint8_t *p_)
+{
+    return *(const uint32_t *)p_;
 }
 
 
@@ -226,21 +240,21 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
      *          generate it.
      */
 
-    lat_n   = be32_to_uint32_(&p_lora_[9]);
-    lon_e   = be32_to_uint32_(&p_lora_[13]);
-    temp[0] = be16_to_uint16_(&p_lora_[17]);
-    temp[1] = be16_to_uint16_(&p_lora_[19]);
-    temp[2] = be16_to_uint16_(&p_lora_[21]);
-    temp[3] = be16_to_uint16_(&p_lora_[23]);
-    rh[0]   = be16_to_uint16_(&p_lora_[25]);
-    rh[1]   = be16_to_uint16_(&p_lora_[27]);
-    rh[2]   = be16_to_uint16_(&p_lora_[29]);
-    rh[3]   = be16_to_uint16_(&p_lora_[31]);
-    vol[0]  = be16_to_uint16_(&p_lora_[33]);
-    vol[1]  = be16_to_uint16_(&p_lora_[35]);
-    vol[2]  = be16_to_uint16_(&p_lora_[37]);
-    vol[3]  = be16_to_uint16_(&p_lora_[39]);
-    weight  = be16_to_uint16_(&p_lora_[41]);
+    lat_n   = le32_to_uint32_(&p_lora_[9]);
+    lon_e   = le32_to_uint32_(&p_lora_[13]);
+    temp[0] = le16_to_uint16_(&p_lora_[17]);
+    temp[1] = le16_to_uint16_(&p_lora_[19]);
+    temp[2] = le16_to_uint16_(&p_lora_[21]);
+    temp[3] = le16_to_uint16_(&p_lora_[23]);
+    rh[0]   = le16_to_uint16_(&p_lora_[25]);
+    rh[1]   = le16_to_uint16_(&p_lora_[27]);
+    rh[2]   = le16_to_uint16_(&p_lora_[29]);
+    rh[3]   = le16_to_uint16_(&p_lora_[31]);
+    vol[0]  = le16_to_uint16_(&p_lora_[33]);
+    vol[1]  = le16_to_uint16_(&p_lora_[35]);
+    vol[2]  = le16_to_uint16_(&p_lora_[37]);
+    vol[3]  = le16_to_uint16_(&p_lora_[39]);
+    weight  = le16_to_uint16_(&p_lora_[41]);
 
     ret = snprintf(p_buf_, bufsize_,
             "write"                         /* Method */
