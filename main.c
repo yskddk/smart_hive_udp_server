@@ -88,50 +88,52 @@ static void sig_handler(int sig)
 
 
 
-static uint16_t le16_to_uint16_(const uint8_t *p_)
+static double le16_to_double_(const uint8_t *p_)
 {
-    return *(const uint16_t *)p_;
+    uint16_t v = *(const uint16_t *)p_;
+    return (double)v;
 }
 
 
 
-static uint16_t be16_to_uint16_(const uint8_t *p_)
+static double be16_to_double_(const uint8_t *p_)
 {
-    uint16_t ret = 0;
+    uint16_t v = 0;
 
     assert(p_);
 
-    ret |= *p_++;
-    ret <<= 8;
-    ret |= *p_;
+    v |= *p_++;
+    v <<= 8;
+    v |= *p_;
 
-    return ret;
+    return (double)v;
 }
 
 
 
-static uint32_t le32_to_uint32_(const uint8_t *p_)
+static double le32_to_double_(const uint8_t *p_)
 {
-    return *(const uint32_t *)p_;
+    uint32_t v = *(const uint32_t *)p_;
+    return (double)v;
 }
 
 
 
-static uint32_t be32_to_uint32_(const uint8_t *p_)
+static double be32_to_double_(const uint8_t *p_)
 {
-    uint32_t ret = 0;
+    uint32_t v = 0;
 
     assert(p_);
 
-    ret |= *p_++;
-    ret <<= 8;
-    ret |= *p_++;
-    ret <<= 8;
-    ret |= *p_++;
-    ret <<= 8;
-    ret |= *p_;
+    v |= *p_++;
+    v <<= 8;
+    v |= *p_++;
+    v <<= 8;
+    v |= *p_++;
+    v <<= 8;
+    v |= *p_;
 
-    return ret;
+    return (double)v;
 }
 
 
@@ -210,12 +212,12 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
         const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
 {
     struct mike_info *p_info = (struct mike_info *)p_->p_user;
-    uint32_t lat_n = 0;
-    uint32_t lon_e = 0;
-    uint16_t temp[4] = { 0 };
-    uint16_t rh[4] = { 0 };
-    uint16_t vol[4] = { 0 };
-    uint16_t weight = 0;
+    double lat_n = 0.0;
+    double lon_e = 0.0;
+    double temp[4] = { 0.0 };
+    double rh[4] = { 0.0 };
+    double vol[4] = { 0.0 };
+    double weight = 0.0;
     int ret = 0;
 
     assert(p_);
@@ -240,51 +242,51 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
      *          generate it.
      */
 
-    lat_n   = le32_to_uint32_(&p_lora_[9]);
-    lon_e   = le32_to_uint32_(&p_lora_[13]);
-    temp[0] = le16_to_uint16_(&p_lora_[17]);
-    temp[1] = le16_to_uint16_(&p_lora_[19]);
-    temp[2] = le16_to_uint16_(&p_lora_[21]);
-    temp[3] = le16_to_uint16_(&p_lora_[23]);
-    rh[0]   = le16_to_uint16_(&p_lora_[25]);
-    rh[1]   = le16_to_uint16_(&p_lora_[27]);
-    rh[2]   = le16_to_uint16_(&p_lora_[29]);
-    rh[3]   = le16_to_uint16_(&p_lora_[31]);
-    vol[0]  = le16_to_uint16_(&p_lora_[33]);
-    vol[1]  = le16_to_uint16_(&p_lora_[35]);
-    vol[2]  = le16_to_uint16_(&p_lora_[37]);
-    vol[3]  = le16_to_uint16_(&p_lora_[39]);
-    weight  = le16_to_uint16_(&p_lora_[41]);
+    lat_n   = le32_to_double_(&p_lora_[9]);
+    lon_e   = le32_to_double_(&p_lora_[13]);
+    temp[0] = le16_to_double_(&p_lora_[17]);
+    temp[1] = le16_to_double_(&p_lora_[19]);
+    temp[2] = le16_to_double_(&p_lora_[21]);
+    temp[3] = le16_to_double_(&p_lora_[23]);
+    rh[0]   = le16_to_double_(&p_lora_[25]);
+    rh[1]   = le16_to_double_(&p_lora_[27]);
+    rh[2]   = le16_to_double_(&p_lora_[29]);
+    rh[3]   = le16_to_double_(&p_lora_[31]);
+    vol[0]  = le16_to_double_(&p_lora_[33]);
+    vol[1]  = le16_to_double_(&p_lora_[35]);
+    vol[2]  = le16_to_double_(&p_lora_[37]);
+    vol[3]  = le16_to_double_(&p_lora_[39]);
+    weight  = le16_to_double_(&p_lora_[41]);
 
     ret = snprintf(p_buf_, bufsize_,
             "write"                         /* Method */
             ",%s"                           /* WorkSheetName */
             ",%02u%02u%02u%02u%02u%02u"     /* yymmddHHMMSS */
-            ",%u.%u"                        /* Lon */
-            ",%u.%u"                        /* Lat */
-            ",%u.%u,%u.%u,%u.%u"            /* Tem1,Hum1,Vol1 */
-            ",%u.%u,%u.%u,%u.%u"            /* Tem2,Hum2,Vol2 */
-            ",%u.%u,%u.%u,%u.%u"            /* Tem3,Hum3,Vol3 */
-            ",%u.%u,%u.%u,%u.%u"            /* Tem4,Hum4,Vol4 */
-            ",%u.%u"                        /* Weight */
+            ",%lf"                          /* Lon */
+            ",%lf"                          /* Lat */
+            ",%lf,%lf,%lf"                  /* Tem1,Hum1,Vol1 */
+            ",%lf,%lf,%lf"                  /* Tem2,Hum2,Vol2 */
+            ",%lf,%lf,%lf"                  /* Tem3,Hum3,Vol3 */
+            ",%lf,%lf,%lf"                  /* Tem4,Hum4,Vol4 */
+            ",%lf"                          /* Weight */
             , p_info->name
             , p_lora_[3], p_lora_[4], p_lora_[5]
             , p_lora_[6], p_lora_[7], p_lora_[8]
-            , lon_e / 1000000, lon_e % 1000000
-            , lat_n / 1000000, lat_n % 1000000
-            , temp[0] / 10, temp[0] % 10
-            , rh[0] / 10, rh[0] % 10
-            , vol[0] / 10, vol[0] % 10
-            , temp[1] / 10, temp[1] % 10
-            , rh[1] / 10, rh[1] % 10
-            , vol[1] / 10, vol[1] % 10
-            , temp[2] / 10, temp[2] % 10
-            , rh[2] / 10, rh[2] % 10
-            , vol[2] / 10, vol[2] % 10
-            , temp[3] / 10, temp[3] % 10
-            , rh[3] / 10, rh[3] % 10
-            , vol[3] / 10, vol[3] % 10
-            , weight / 100, weight % 100
+            , lon_e   / 1000000
+            , lat_n   / 1000000
+            , temp[0] / 10
+            , rh[0]   / 10
+            , vol[0]  / 10
+            , temp[1] / 10
+            , rh[1]   / 10
+            , vol[1]  / 10
+            , temp[2] / 10
+            , rh[2]   / 10
+            , vol[2]  / 10
+            , temp[3] / 10
+            , rh[3]   / 10
+            , vol[3]  / 10
+            , weight  / 100
             );
     if (ret < 0 || bufsize_ <= ret) {
         fprintf(stderr, "snprintf() [%d]: truncated\n", __LINE__);
@@ -327,12 +329,12 @@ static bool send_to_server_mike_(struct delegate_plugin *p_, const char *p_csv_)
 static bool generate_csv_default_(struct delegate_plugin *p_,
         const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
 {
-    uint32_t lat_n = 0;
-    uint32_t lon_e = 0;
-    uint16_t temp[4] = { 0 };
-    uint16_t rh[4] = { 0 };
-    uint16_t vol[4] = { 0 };
-    uint16_t weight = 0;
+    double lat_n = 0.0;
+    double lon_e = 0.0;
+    double temp[4] = { 0.0 };
+    double rh[4] = { 0.0 };
+    double vol[4] = { 0.0 };
+    double weight = 0.0;
     int ret = 0;
 
     assert(p_);
@@ -341,49 +343,49 @@ static bool generate_csv_default_(struct delegate_plugin *p_,
     assert(p_buf_);
 
     /* generate CSV */
-    lat_n   = be32_to_uint32_(&p_lora_[9]);
-    lon_e   = be32_to_uint32_(&p_lora_[13]);
-    temp[0] = be16_to_uint16_(&p_lora_[17]);
-    temp[1] = be16_to_uint16_(&p_lora_[19]);
-    temp[2] = be16_to_uint16_(&p_lora_[21]);
-    temp[3] = be16_to_uint16_(&p_lora_[23]);
-    rh[0]   = be16_to_uint16_(&p_lora_[25]);
-    rh[1]   = be16_to_uint16_(&p_lora_[27]);
-    rh[2]   = be16_to_uint16_(&p_lora_[29]);
-    rh[3]   = be16_to_uint16_(&p_lora_[31]);
-    vol[0]  = be16_to_uint16_(&p_lora_[33]);
-    vol[1]  = be16_to_uint16_(&p_lora_[35]);
-    vol[2]  = be16_to_uint16_(&p_lora_[37]);
-    vol[3]  = be16_to_uint16_(&p_lora_[39]);
-    weight  = be16_to_uint16_(&p_lora_[41]);
+    lat_n   = be32_to_double_(&p_lora_[9]);
+    lon_e   = be32_to_double_(&p_lora_[13]);
+    temp[0] = be16_to_double_(&p_lora_[17]);
+    temp[1] = be16_to_double_(&p_lora_[19]);
+    temp[2] = be16_to_double_(&p_lora_[21]);
+    temp[3] = be16_to_double_(&p_lora_[23]);
+    rh[0]   = be16_to_double_(&p_lora_[25]);
+    rh[1]   = be16_to_double_(&p_lora_[27]);
+    rh[2]   = be16_to_double_(&p_lora_[29]);
+    rh[3]   = be16_to_double_(&p_lora_[31]);
+    vol[0]  = be16_to_double_(&p_lora_[33]);
+    vol[1]  = be16_to_double_(&p_lora_[35]);
+    vol[2]  = be16_to_double_(&p_lora_[37]);
+    vol[3]  = be16_to_double_(&p_lora_[39]);
+    weight  = be16_to_double_(&p_lora_[41]);
 
     ret = snprintf(p_buf_, bufsize_,
             "%u,%u,%u"      /* ID, N, PI */
             ",%u,%u,%u"     /* yymmdd */
             ",%u,%u,%u"     /* HHMMSS */
-            ",%u.%u,%u.%u"
-            ",%u.%u,%u.%u,%u.%u,%u.%u"
-            ",%u.%u,%u.%u,%u.%u,%u.%u"
-            ",%u.%u,%u.%u,%u.%u,%u.%u"
-            ",%u.%u"
+            ",%lf,%lf"
+            ",%lf,%lf,%lf,%lf"
+            ",%lf,%lf,%lf,%lf"
+            ",%lf,%lf,%lf,%lf"
+            ",%lf"
             , p_lora_[0], p_lora_[1], p_lora_[2]
             , p_lora_[3], p_lora_[4], p_lora_[5]
             , p_lora_[6], p_lora_[7], p_lora_[8]
-            , lat_n / 1000000, lat_n % 1000000
-            , lon_e / 1000000, lon_e % 1000000
-            , temp[0] / 10, temp[0] % 10
-            , temp[1] / 10, temp[1] % 10
-            , temp[2] / 10, temp[2] % 10
-            , temp[3] / 10, temp[3] % 10
-            , rh[0] / 10, rh[0] % 10
-            , rh[1] / 10, rh[1] % 10
-            , rh[2] / 10, rh[2] % 10
-            , rh[3] / 10, rh[3] % 10
-            , vol[0] / 10, vol[0] % 10
-            , vol[1] / 10, vol[1] % 10
-            , vol[2] / 10, vol[2] % 10
-            , vol[3] / 10, vol[3] % 10
-            , weight / 100, weight % 100
+            , lat_n   / 1000000
+            , lon_e   / 1000000
+            , temp[0] / 10
+            , temp[1] / 10
+            , temp[2] / 10
+            , temp[3] / 10
+            , rh[0]   / 10
+            , rh[1]   / 10
+            , rh[2]   / 10
+            , rh[3]   / 10
+            , vol[0]  / 10
+            , vol[1]  / 10
+            , vol[2]  / 10
+            , vol[3]  / 10
+            , weight  / 100
             );
     if (ret < 0 || bufsize_ <= ret) {
         fprintf(stderr, "snprintf() [%d]: truncated\n", __LINE__);
