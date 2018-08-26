@@ -63,13 +63,30 @@
 
 
 struct delegate_plugin {
-    bool (*p_init_fn)(struct delegate_plugin *p_, unsigned udp_id_);    /* opt */
-    void (*p_deinit_fn)(struct delegate_plugin *p_, unsigned udp_id_);  /* opt */
-    bool (*p_generate_csv_fn)(struct delegate_plugin *p_,
-            const uint8_t *p_lora_, size_t bufsize_, char *p_buf_);     /* must */
-    bool (*p_send_to_server_fn)(struct delegate_plugin *p_,
-            const char *p_csv_);                                        /* must */
-    void *p_user;                                                       /* opt */
+    /** [opt] Initalizing handler */
+    bool (*p_init_fn)(
+            unsigned udp_id_,               /**< [in] source UDP client ID */
+            struct delegate_plugin *p_      /**< [in,out] delegate plugin info */
+            );
+    /** [opt] De-initalizing hander */
+    void (*p_deinit_fn)(
+            unsigned udp_id_,               /**< [in] source UDP client ID */
+            struct delegate_plugin *p_      /**< [in,out] delegate plugin info */
+            );
+    /** [must] Generating CSV hander */
+    bool (*p_generate_csv_fn)(
+            struct delegate_plugin *p_,     /**< [in,out] delegate plugin info */
+            const uint8_t *p_lora_,         /**< [in] LoRa packet data */
+            size_t bufsize_,                /**< [in] size of p_buf_ area in byte */
+            char *p_buf_                    /**< [in,out] string buffer for output CSV */
+            );
+    /** [must] Send CSV handler toward to forwarding-server */
+    bool (*p_send_to_server_fn)(
+            struct delegate_plugin *p_,     /**< [in,out] delegate plugin info */
+            const char *p_csv_              /**< [in] CSV string to send */
+            );
+    /** [opt] User data */
+    void *p_user;
 };
 
 
@@ -144,10 +161,11 @@ static double be32_to_double_(const uint8_t *p_)
 #define UDP_MIKE_SERVER_ADDR ("127.0.0.1")
 #define MAX_SHEET_NAME (32)
 
+/** User data for delegation plugin of Mike's Spreadsheet forwarder */
 struct mike_info {
-    int socket_fd;
-    struct sockaddr_in *p_sa;
-    char name[MAX_SHEET_NAME];
+    unsigned gw_id;             /**< LoRa GW UDP client ID */
+    int socket_fd;              /**< Forwarding server's socket FD */
+    struct sockaddr_in *p_sa;   /**< Forwarding server's socket address */
 };
 
 static int g_mike_socket_fd_ = -1;
@@ -156,7 +174,7 @@ static struct mike_info g_mike_info[MAX_UDP_CLIENTS];
 
 
 
-static bool init_mike_(struct delegate_plugin *p_, unsigned udp_id_)
+static bool init_mike_(unsigned udp_id_, struct delegate_plugin *p_)
 {
     struct mike_info *p_info = &g_mike_info[udp_id_];
 
@@ -180,10 +198,9 @@ static bool init_mike_(struct delegate_plugin *p_, unsigned udp_id_)
         }
     }
 
+    p_info->gw_id     = udp_id_;
     p_info->socket_fd = g_mike_socket_fd_;
     p_info->p_sa      = &g_mike_sa_;
-    snprintf(p_info->name, sizeof(p_info->name), "%u", udp_id_);
-    p_info->name[sizeof(p_info->name) - 1] = '\0';
 
     p_->p_user = p_info;
 
@@ -192,7 +209,7 @@ static bool init_mike_(struct delegate_plugin *p_, unsigned udp_id_)
 
 
 
-static void deinit_mike_(struct delegate_plugin *p_, unsigned udp_id_)
+static void deinit_mike_(unsigned udp_id_, struct delegate_plugin *p_)
 {
     assert(p_);
     assert(udp_id_ < MAX_UDP_CLIENTS);
@@ -260,7 +277,7 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
 
     ret = snprintf(p_buf_, bufsize_,
             "write"                         /* Method */
-            ",%s"                           /* WorkSheetName */
+            ",%02u-%02u"                    /* WorkSheetName (gw_id-lora_id) */
             ",%02u%02u%02u%02u%02u%02u"     /* yymmddHHMMSS */
             ",%lf"                          /* Lon */
             ",%lf"                          /* Lat */
@@ -269,7 +286,7 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
             ",%lf,%lf,%lf"                  /* Tem3,Hum3,Vol3 */
             ",%lf,%lf,%lf"                  /* Tem4,Hum4,Vol4 */
             ",%lf"                          /* Weight */
-            , p_info->name
+            , p_info->gw_id, p_lora_[0]
             , p_lora_[3], p_lora_[4], p_lora_[5]
             , p_lora_[6], p_lora_[7], p_lora_[8]
             , lon_e   / 1000000
@@ -360,7 +377,7 @@ static bool generate_csv_default_(struct delegate_plugin *p_,
     weight  = be16_to_double_(&p_lora_[41]);
 
     ret = snprintf(p_buf_, bufsize_,
-            "%u,%u,%u"      /* ID, N, PI */
+            "%u,%u,%u"     /* LORA-ID, N, PI */
             ",%u,%u,%u"     /* yymmdd */
             ",%u,%u,%u"     /* HHMMSS */
             ",%lf,%lf"
@@ -528,7 +545,7 @@ static void cleanup_delegate_(void)
 
     for (i = 0; i < MAX_UDP_CLIENTS; ++i) {
         if (g_delegate_[i].p_deinit_fn) {
-            g_delegate_[i].p_deinit_fn(&g_delegate_[i], i);
+            g_delegate_[i].p_deinit_fn(i, &g_delegate_[i]);
         }
     }
 
@@ -539,7 +556,7 @@ static void cleanup_delegate_(void)
 
 static bool setup_delegate_(void)
 {
-    int i = 0;
+    unsigned i = 0;
 
     memset(g_delegate_, 0, sizeof(g_delegate_));
 
@@ -557,7 +574,7 @@ static bool setup_delegate_(void)
 
     for (i = 0; i < MAX_UDP_CLIENTS; ++i) {
         if (g_delegate_[i].p_init_fn) {
-            if (!g_delegate_[i].p_init_fn(&g_delegate_[i], i)) {
+            if (!g_delegate_[i].p_init_fn(i, &g_delegate_[i])) {
                 cleanup_delegate_();
                 return false;
             }
