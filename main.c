@@ -11,7 +11,8 @@
 /** Using Mike's server, enable this */
 #define ENABLE_DELEGATE_MIKE
 
-#define ENABLE_DEBUG
+/** Enable debug print */
+// #define ENABLE_DEBUG
 
 #include <stdio.h>
 #include <string.h>
