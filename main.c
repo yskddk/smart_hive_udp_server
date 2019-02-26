@@ -43,7 +43,8 @@
 #define UDP_HEADER_SIZE       (4)
 #define UDP_PACKET_SIZE       (UDP_HEADER_SIZE + LORA_PACKET_SIZE)
 enum tag_UDP_CLIENT_IDS {
-    UDP_CLIENT_ID_MAIN  = 0,
+    UDP_CLIENT_ID_DUMMY = 0,
+    UDP_CLIENT_ID_MAIN,
     MAX_UDP_CLIENT_IDS
 };
 
@@ -471,6 +472,12 @@ static bool setup_delegate_(void)
 
     for (i = 0; i < MAX_UDP_CLIENT_IDS; ++i) {
         switch (i) {
+        case UDP_CLIENT_ID_DUMMY:
+#if defined(ENABLE_DEBUG)
+            fprintf(stderr, "dummy device id %u, skipped\n", i);
+#endif /* defined(ENABLE_DEBUG) */
+            break;
+
         case UDP_CLIENT_ID_MAIN:
             g_delegate_[i].p_init_fn           = init_mike_;
             g_delegate_[i].p_deinit_fn         = deinit_mike_;
@@ -484,7 +491,7 @@ static bool setup_delegate_(void)
 
         default:
 #if defined(ENABLE_DEBUG)
-            fprintf(stderr, "unknown device id %u\n", i);
+            fprintf(stderr, "unknown device id %u, skipped\n", i);
 #endif /* defined(ENABLE_DEBUG) */
             break;
         }
