@@ -36,7 +36,7 @@
 #define LORA_HEADER_SIZE  (3)
 #define LORA_PAYLOAD_SIZE (40)
 #define LORA_PACKET_SIZE  (LORA_HEADER_SIZE + LORA_PAYLOAD_SIZE)
-#define MAX_LORA_CLIENTS  (100)
+#define MAX_LORA_CLIENTS  (10)
 
 #define UDP_PROTOCOL_VERSION  (0x12)
 #define UDP_PKTID_PUSH_DATA   (0)
@@ -44,7 +44,7 @@
 #define UDP_PACKET_SIZE       (UDP_HEADER_SIZE + LORA_PACKET_SIZE)
 enum tag_UDP_CLIENT_IDS {
     UDP_CLIENT_ID_DUMMY = 0,
-    UDP_CLIENT_ID_MAIN,
+    UDP_CLIENT_MIKE,
     MAX_UDP_CLIENT_IDS
 };
 
@@ -64,45 +64,27 @@ enum tag_UDP_CLIENT_IDS {
 
 
 
-struct delegate_plugin {
-    /** [opt] Initalizing handler */
-    bool (*p_init_fn)(
-            unsigned udp_id_,               /**< [in] source UDP client ID */
-            struct delegate_plugin *p_      /**< [in,out] delegate plugin info */
-            );
-    /** [opt] De-initalizing hander */
-    void (*p_deinit_fn)(
-            unsigned udp_id_,               /**< [in] source UDP client ID */
-            struct delegate_plugin *p_      /**< [in,out] delegate plugin info */
-            );
-    /** [must] Generating CSV hander */
-    bool (*p_generate_csv_fn)(
-            struct delegate_plugin *p_,     /**< [in,out] delegate plugin info */
-            const uint8_t *p_lora_,         /**< [in] LoRa packet data */
-            size_t bufsize_,                /**< [in] size of p_buf_ area in byte */
-            char *p_buf_                    /**< [in,out] string buffer for output CSV */
-            );
-    /** [must] Send CSV handler toward to forwarding-server */
-    bool (*p_send_to_server_fn)(
-            struct delegate_plugin *p_,     /**< [in,out] delegate plugin info */
-            const char *p_csv_              /**< [in] CSV string to send */
-            );
-    /** [opt] User data */
-    void *p_user;
+#define UDP_MIKE_SERVER_PORT (50910)
+#define UDP_MIKE_SERVER_ADDR ("127.0.0.1")
+
+/** User data for delegation plugin of Mike's Spreadsheet forwarder */
+struct mike_info {
+    struct sockaddr_in sa;  /**< Forwarding server's socket address */
+    int socket_fd;          /**< Forwarding server's socket FD */
+
+    uint8_t history[MAX_LORA_CLIENTS][LORA_PACKET_SIZE];
+                            /**< LoRa packet histories */
 };
-static struct delegate_plugin g_delegate_[MAX_UDP_CLIENT_IDS];
+static struct mike_info g_mike_info_ = { 0 };
 
 
 
-static uint8_t g_lora_histories_[MAX_UDP_CLIENT_IDS][MAX_LORA_CLIENTS][LORA_PACKET_SIZE];
-
-
-
+/** Application will terminate when getting SIGINT */
 static volatile sig_atomic_t g_do_term_ = 0;
 
 
 
-static void sig_handler(int sig)
+static void sig_handler(int sig_)
 {
     g_do_term_ = 1;
     return;
@@ -160,77 +142,46 @@ static double be32_to_double_(const uint8_t *p_)
 
 
 
-#define UDP_MIKE_SERVER_PORT (50910)
-#define UDP_MIKE_SERVER_ADDR ("127.0.0.1")
-
-/** User data for delegation plugin of Mike's Spreadsheet forwarder */
-struct mike_info {
-    struct sockaddr_in sa;  /**< Forwarding server's socket address */
-    int socket_fd;          /**< Forwarding server's socket FD */
-    unsigned gw_id;         /**< LoRa GW UDP client ID */
-};
-static struct mike_info g_mike_info[MAX_UDP_CLIENT_IDS] = { 0 };
-
-
-
-static bool init_mike_(unsigned udp_id_, struct delegate_plugin *p_)
+static bool init_mike_(void)
 {
-    struct mike_info *p_info = &g_mike_info[udp_id_];
     int fd = -1;
 
-    assert(udp_id_ < MAX_UDP_CLIENT_IDS);
-    assert(p_);
-
-    assert(UDP_CLIENT_ID_MAIN == udp_id_);
-    assert(p_info->gw_id == 0);
-
     if (1 != inet_pton(AF_INET,
-                UDP_MIKE_SERVER_ADDR, &p_info->sa.sin_addr.s_addr)) {
+                UDP_MIKE_SERVER_ADDR, &g_mike_info_.sa.sin_addr.s_addr)) {
         perror("inet_pton() for Mike");
         return false;
 
     }
-    p_info->sa.sin_family = AF_INET;
-    p_info->sa.sin_port   = htons(UDP_MIKE_SERVER_PORT);
+    g_mike_info_.sa.sin_family = AF_INET;
+    g_mike_info_.sa.sin_port   = htons(UDP_MIKE_SERVER_PORT);
 
     fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
         perror("client socket for Mike");
         return false;
     }
-    p_info->socket_fd = fd;
-    p_info->gw_id     = udp_id_;
-
-    p_->p_user = p_info;
+    g_mike_info_.socket_fd = fd;
 
     return true;
 }
 
 
 
-static void deinit_mike_(unsigned udp_id_, struct delegate_plugin *p_)
+static void deinit_mike_(void)
 {
-    struct mike_info *p_info = &g_mike_info[udp_id_];
-
-    assert(p_);
-    assert(UDP_CLIENT_ID_MAIN == udp_id_);
-
-    if (0 <= p_info->socket_fd) {
-        close(p_info->socket_fd);
-        memset(p_info, 0, sizeof(*p_info));
+    if (0 <= g_mike_info_.socket_fd) {
+        close(g_mike_info_.socket_fd);
+        memset(&g_mike_info_, 0, sizeof(g_mike_info_));
     }
-
-    p_->p_user = NULL;
 
     return;
 }
 
 
 
-static bool generate_csv_mike_(struct delegate_plugin *p_,
+static bool generate_csv_mike_(
         const uint8_t *p_lora_, size_t bufsize_, char *p_buf_)
 {
-    struct mike_info *p_info = (struct mike_info *)p_->p_user;
     double lat_n = 0.0;
     double lon_e = 0.0;
     double temp[4] = { 0.0 };
@@ -239,11 +190,9 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
     double weight = 0.0;
     int ret = 0;
 
-    assert(p_);
     assert(p_lora_);
     assert(bufsize_);
     assert(p_buf_);
-    assert(p_info);
 
     /*
      * Mike's server format CSV
@@ -288,7 +237,7 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
             ",%lf,%lf,%lf"                  /* Tem3,Hum3,Vol3 */
             ",%lf,%lf,%lf"                  /* Tem4,Hum4,Vol4 */
             ",%lf"                          /* Weight */
-            , p_info->gw_id, p_lora_[0]
+            , UDP_CLIENT_MIKE, p_lora_[0]
             , p_lora_[3], p_lora_[4], p_lora_[5]
             , p_lora_[6], p_lora_[7], p_lora_[8]
             , lon_e   / 1000000
@@ -318,19 +267,16 @@ static bool generate_csv_mike_(struct delegate_plugin *p_,
 
 
 
-static bool send_to_server_mike_(struct delegate_plugin *p_, const char *p_csv_)
+static bool send_to_server_mike_(const char *p_csv_)
 {
-    struct mike_info *p_info = (struct mike_info *)p_->p_user;
     size_t len = 0;
     ssize_t nr = -1;
 
-    assert(p_);
     assert(p_csv_);
-    assert(p_info);
 
     len = 1 + strlen(p_csv_);
-    nr = sendto(p_info->socket_fd, p_csv_, len, 0 ,
-            (struct sockaddr *)&p_info->sa, sizeof(p_info->sa));
+    nr = sendto(g_mike_info_.socket_fd, p_csv_, len, 0 ,
+            (struct sockaddr *)&g_mike_info_.sa, sizeof(g_mike_info_.sa));
     if (nr != len) {
         perror("sendto() for Mike");
         return false;
@@ -341,11 +287,10 @@ static bool send_to_server_mike_(struct delegate_plugin *p_, const char *p_csv_)
 
 
 
-static bool delegate_(size_t len_, const uint8_t *p_udp_)
+static bool delegate_to_mike_(size_t len_, const uint8_t *p_udp_)
 {
     static char csv[CSV_BUFSIZE];
 
-    uint8_t *p_hist = NULL;
     const uint8_t *p_lora = NULL;
 
     uint8_t udp_id = 0;
@@ -365,8 +310,8 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
      *
      *      * A (1 byte) : Protocol version
      *      * B (1 byte) : Length (from A to E)
-     *      * C (1 byte) : UDP client ID
-     *      * D (1 byte) : Packet type
+     *      * C (1 byte) : UDP client ID (we expected UDP_CLIENT_MIKE)
+     *      * D (1 byte) : Packet type (we excepted UDP_PKTID_PUSH_DATA)
      *      * E (B-4 bytes) : LoRa data (max 127 bytes)
      */
     if (len_ != UDP_PACKET_SIZE) {
@@ -381,8 +326,9 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
     }
 
     udp_id = p_udp_[2];
-    if (MAX_UDP_CLIENT_IDS <= udp_id) {
-        fprintf(stderr, "Invalid UDP client ID: %u\n", udp_id);
+    if (UDP_CLIENT_MIKE != udp_id) {
+        fprintf(stderr, "Invalid UDP client ID: %u (expected %u)\n",
+                udp_id, UDP_CLIENT_MIKE);
         return false;
     }
 
@@ -398,7 +344,7 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
      *  +----+---+----+------+------+-----+--------+------+-------+----+
      *
      *      * Header (3 bytes)
-     *          * ID (1 byte) : Device ID
+     *          * ID (1 byte) : Device ID (as lora_id)
      *          * N (1 byte) : Packet serial number
      *          * PI (1 byte) : Reserved (always 1)
      *      * Payload (40 bytes)
@@ -417,8 +363,7 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
         return false;
     }
 
-    p_hist = g_lora_histories_[udp_id][lora_id];
-    if (!memcmp(p_hist, p_lora, LORA_PACKET_SIZE)) {
+    if (!memcmp(&g_mike_info_.history[lora_id], p_lora, LORA_PACKET_SIZE)) {
 #if defined(ENABLE_DEBUG)
         fprintf(stderr, "same data exists\n");
 #endif /* defined(ENABLE_DEBUG) */
@@ -429,72 +374,17 @@ static bool delegate_(size_t len_, const uint8_t *p_udp_)
 #if defined(ENABLE_DEBUG)
     fprintf(stderr, "new data arrival\n");
 #endif /* defined(ENABLE_DEBUG) */
-    memcpy(p_hist, p_lora, LORA_PACKET_SIZE);
+    memcpy(&g_mike_info_.history[lora_id], p_lora, LORA_PACKET_SIZE);
 
-    assert(g_delegate_[udp_id].p_generate_csv_fn);
-    if (!g_delegate_[udp_id].p_generate_csv_fn(&g_delegate_[udp_id],
-                p_lora, sizeof(csv), csv)) {
+    if (!generate_csv_mike_(p_lora, sizeof(csv), csv)) {
         fprintf(stderr, "Generate CSV failed\n");
         return false;
     }
 
-    assert(g_delegate_[udp_id].p_send_to_server_fn);
-    if (!g_delegate_[udp_id].p_send_to_server_fn(&g_delegate_[udp_id], csv)) {
+
+    if (!send_to_server_mike_(csv)) {
         fprintf(stderr, "Send CSV failed\n");
         return false;
-    }
-
-    return true;
-}
-
-
-
-static void cleanup_delegate_(void)
-{
-    int i = 0;
-
-    for (i = 0; i < MAX_UDP_CLIENT_IDS; ++i) {
-        if (g_delegate_[i].p_deinit_fn) {
-            g_delegate_[i].p_deinit_fn(i, &g_delegate_[i]);
-        }
-    }
-
-    return;
-}
-
-
-
-static bool setup_delegate_(void)
-{
-    unsigned i = 0;
-
-    memset(g_delegate_, 0, sizeof(g_delegate_));
-
-    for (i = 0; i < MAX_UDP_CLIENT_IDS; ++i) {
-        switch (i) {
-        case UDP_CLIENT_ID_DUMMY:
-#if defined(ENABLE_DEBUG)
-            fprintf(stderr, "dummy device id %u, skipped\n", i);
-#endif /* defined(ENABLE_DEBUG) */
-            break;
-
-        case UDP_CLIENT_ID_MAIN:
-            g_delegate_[i].p_init_fn           = init_mike_;
-            g_delegate_[i].p_deinit_fn         = deinit_mike_;
-            g_delegate_[i].p_generate_csv_fn   = generate_csv_mike_;
-            g_delegate_[i].p_send_to_server_fn = send_to_server_mike_;
-            if (!g_delegate_[i].p_init_fn(i, &g_delegate_[i])) {
-                cleanup_delegate_();
-                return false;
-            }
-            break;
-
-        default:
-#if defined(ENABLE_DEBUG)
-            fprintf(stderr, "unknown device id %u, skipped\n", i);
-#endif /* defined(ENABLE_DEBUG) */
-            break;
-        }
     }
 
     return true;
@@ -523,9 +413,9 @@ int main(void)
 #endif /* defined(ENABLE_DEBUG) */
 
     g_do_term_ = 0;
-    memset(g_lora_histories_, 0, sizeof(g_lora_histories_));
-    if (!setup_delegate_()) {
-        fprintf(stderr, "Fatal error: setup_delegate_()\n");
+    if (!init_mike_()) {
+        deinit_mike_();
+        fprintf(stderr, "Fatal error: init_mike_()\n");
         return EXIT_FAILURE;
     }
 
@@ -630,9 +520,9 @@ int main(void)
 
             } else {
 #if defined(ENABLE_DEBUG)
-                fprintf(stderr, "call delegate_()\n");
+                fprintf(stderr, "call delegate_to_mike_()\n");
 #endif /* defined(ENABLE_DEBUG) */
-                delegate_(nr, buf);
+                delegate_to_mike_(nr, buf);
             }
         } else {
             fprintf(stderr,
@@ -642,7 +532,7 @@ int main(void)
 
     close(socket_fd), socket_fd = -1;
 
-    cleanup_delegate_();
+    deinit_mike_();
 
 #if defined(ENABLE_DEBUG)
     fprintf(stderr, "END\n");
